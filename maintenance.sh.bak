@@ -1,0 +1,2174 @@
+#!/bin/bash
+#═══════════════════════════════════════════════════════════════════════════════
+#  ██╗  ██╗ ██████╗ ██████╗ ██╗   ██╗███████╗    ███╗   ███╗ █████╗ ██╗███╗   ██╗████████╗
+#  ██║  ██║██╔═══██╗██╔══██╗██║   ██║██╔════╝    ████╗ ████║██╔══██╗██║████╗  ██║╚══██╔══╝
+#  ███████║██║   ██║██████╔╝██║   ██║███████╗    ██╔████╔██║███████║██║██╔██╗ ██║   ██║
+#  ██╔══██║██║   ██║██╔══██╗██║   ██║╚════██║    ██║╚██╔╝██║██╔══██║██║██║╚██╗██║   ██║
+#  ██║  ██║╚██████╔╝██║  ██║╚██████╔╝███████║    ██║ ╚═╝ ██║██║  ██║██║██║ ╚████║   ██║
+#  ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝    ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝
+#
+#  Script de Mantenimiento y Optimización para Arch Linux
+#  Versión: 2.1 - Complete System Optimizer (Audited)
+#═══════════════════════════════════════════════════════════════════════════════
+
+set -o pipefail
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONFIGURACIÓN GLOBAL
+# ═══════════════════════════════════════════════════════════════════════════════
+
+VERSION="2.2"
+SCRIPT_NAME="H0RUS Maintenance"
+BACKUP_DIR="$HOME/.h0rus-maintenance/backups"
+CONFIG_DIR="$HOME/.h0rus-maintenance/config"
+LOG_DIR="$HOME/.h0rus-maintenance/logs"
+LOG_FILE="$LOG_DIR/maintenance_$(date +%Y%m%d_%H%M%S).log"
+LOCK_FILE="/tmp/h0rus-maintenance.lock"
+EXCLUSIONS_FILE="$CONFIG_DIR/excluded_paths.conf"
+
+# Crear directorios necesarios
+mkdir -p "$BACKUP_DIR" "$CONFIG_DIR" "$LOG_DIR"
+
+# Crear archivo de exclusiones si no existe
+if [[ ! -f "$EXCLUSIONS_FILE" ]]; then
+    cat > "$EXCLUSIONS_FILE" << 'EXCL'
+# H0RUS Maintenance - Rutas Excluidas
+# Agregar una ruta por línea (rutas absolutas)
+# Las líneas que comienzan con # son comentarios
+#
+# Ejemplo:
+# /home/usuario/MEGA
+# /home/usuario/Dropbox
+# /home/usuario/GoogleDrive
+EXCL
+fi
+
+# Array para rutas excluidas personalizadas
+declare -a EXCLUDED_PATHS=()
+
+# Colores
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+GRAY='\033[0;90m'
+ORANGE='\033[0;33m'
+NC='\033[0m'
+BOLD='\033[1m'
+DIM='\033[2m'
+
+# Iconos
+ICON_OK="✓"
+ICON_FAIL="✗"
+ICON_WARN="⚠"
+ICON_INFO="ℹ"
+ICON_CLEAN="🧹"
+ICON_PACKAGE="📦"
+ICON_DISK="💾"
+ICON_ROCKET="🚀"
+ICON_SHIELD="🛡"
+ICON_TRASH="🗑"
+ICON_NET="🌐"
+ICON_CPU="⚡"
+ICON_TEMP="🌡"
+ICON_LOCK="🔒"
+ICON_BACKUP="💿"
+ICON_GAME="🎮"
+ICON_TIMER="⏱"
+
+# Navegadores excluidos
+EXCLUDED_BROWSERS=(
+    "brave" "BraveSoftware" "google-chrome" "chromium" "firefox"
+    "mozilla" "vivaldi" "opera" "microsoft-edge" "thorium"
+    "floorp" "librewolf" "waterfox" "zen" "epiphany"
+)
+
+# Detección del sistema (inicializado)
+IS_LAPTOP=false
+IS_SSD=false
+HAS_NVIDIA=false
+HAS_AMD=false
+HAS_INTEL=false
+TOTAL_RAM=0
+SYSTEM_DETECTED=false
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FUNCIONES AUXILIARES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+}
+
+# Función segura para verificar si un valor es numérico
+is_number() {
+    [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+# Función segura para aritmética
+safe_subtract() {
+    local a=${1:-0}
+    local b=${2:-0}
+    # Validar que ambos sean números
+    is_number "$a" || a=0
+    is_number "$b" || b=0
+    echo $((a - b))
+}
+
+# Función para formatear bytes de forma segura
+format_bytes() {
+    local bytes=${1:-0}
+    is_number "$bytes" || bytes=0
+
+    if [[ $bytes -eq 0 ]]; then
+        echo "0B"
+        return
+    fi
+
+    if command -v numfmt &>/dev/null; then
+        numfmt --to=iec "$bytes" 2>/dev/null || echo "0B"
+    else
+        # Fallback manual
+        if [[ $bytes -gt 1073741824 ]]; then
+            echo "$((bytes / 1073741824))G"
+        elif [[ $bytes -gt 1048576 ]]; then
+            echo "$((bytes / 1048576))M"
+        elif [[ $bytes -gt 1024 ]]; then
+            echo "$((bytes / 1024))K"
+        else
+            echo "${bytes}B"
+        fi
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GESTIÓN DE EXCLUSIONES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Cargar rutas excluidas desde el archivo de configuración
+load_exclusions() {
+    EXCLUDED_PATHS=()
+    if [[ -f "$EXCLUSIONS_FILE" ]]; then
+        while IFS= read -r line; do
+            # Ignorar líneas vacías y comentarios
+            [[ -z "$line" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            # Expandir ~ a $HOME
+            line="${line/#\~/$HOME}"
+            # Solo agregar si es una ruta válida
+            if [[ -e "$line" ]]; then
+                EXCLUDED_PATHS+=("$line")
+            fi
+        done < "$EXCLUSIONS_FILE"
+    fi
+}
+
+# Mostrar exclusiones activas
+show_exclusions() {
+    load_exclusions
+
+    print_subsection "Rutas Excluidas de Limpieza"
+
+    if [[ ${#EXCLUDED_PATHS[@]} -eq 0 ]]; then
+        print_status "info" "No hay rutas excluidas configuradas"
+    else
+        print_status "ok" "${#EXCLUDED_PATHS[@]} rutas excluidas:"
+        for path in "${EXCLUDED_PATHS[@]}"; do
+            local size=$(du -sh "$path" 2>/dev/null | cut -f1)
+            echo -e "    ${CYAN}🔒${NC} $path ${GRAY}($size)${NC}"
+        done
+    fi
+
+    echo ""
+    print_status "info" "Archivo de configuración: $EXCLUSIONS_FILE"
+}
+
+# Mostrar banner de exclusiones al inicio de limpieza
+show_exclusions_banner() {
+    load_exclusions
+
+    if [[ ${#EXCLUDED_PATHS[@]} -gt 0 ]]; then
+        echo ""
+        echo -e "  ${CYAN}┌─────────────────────────────────────────────────────────────────────┐${NC}"
+        echo -e "  ${CYAN}│${NC} ${ICON_LOCK} ${WHITE}RUTAS PROTEGIDAS (no se limpiarán):${NC}"
+        for path in "${EXCLUDED_PATHS[@]}"; do
+            local basename=$(basename "$path")
+            printf "  ${CYAN}│${NC}   ${GREEN}✓${NC} %-60s ${CYAN}│${NC}\n" "$basename"
+        done
+        echo -e "  ${CYAN}└─────────────────────────────────────────────────────────────────────┘${NC}"
+        echo ""
+    fi
+}
+
+# Agregar una ruta a las exclusiones
+add_exclusion() {
+    local path="$1"
+
+    # Expandir ~ a $HOME
+    path="${path/#\~/$HOME}"
+
+    # Convertir a ruta absoluta
+    if [[ ! "$path" = /* ]]; then
+        path="$(realpath "$path" 2>/dev/null)" || path="$PWD/$path"
+    fi
+
+    # Verificar que la ruta existe
+    if [[ ! -e "$path" ]]; then
+        print_status "fail" "La ruta no existe: $path"
+        return 1
+    fi
+
+    # Verificar si ya está excluida
+    load_exclusions
+    for excluded in "${EXCLUDED_PATHS[@]}"; do
+        if [[ "$excluded" == "$path" ]]; then
+            print_status "warn" "La ruta ya está excluida: $path"
+            return 0
+        fi
+    done
+
+    # Agregar al archivo
+    echo "$path" >> "$EXCLUSIONS_FILE"
+    print_status "ok" "Ruta agregada a exclusiones: ${GREEN}$path${NC}"
+    log "Exclusión agregada: $path"
+}
+
+# Eliminar una ruta de las exclusiones
+remove_exclusion() {
+    local path="$1"
+
+    # Expandir ~ a $HOME
+    path="${path/#\~/$HOME}"
+
+    # Crear archivo temporal
+    local tmpfile=$(mktemp)
+
+    local found=false
+    while IFS= read -r line; do
+        local expanded_line="${line/#\~/$HOME}"
+        if [[ "$expanded_line" == "$path" ]]; then
+            found=true
+            continue
+        fi
+        echo "$line" >> "$tmpfile"
+    done < "$EXCLUSIONS_FILE"
+
+    if $found; then
+        mv "$tmpfile" "$EXCLUSIONS_FILE"
+        print_status "ok" "Ruta eliminada de exclusiones: ${YELLOW}$path${NC}"
+        log "Exclusión eliminada: $path"
+    else
+        rm -f "$tmpfile"
+        print_status "warn" "La ruta no estaba en las exclusiones: $path"
+    fi
+}
+
+# Verificar si una ruta está excluida
+is_path_excluded() {
+    local check_path="$1"
+
+    for excluded in "${EXCLUDED_PATHS[@]}"; do
+        # Verificar si check_path está dentro de excluded o es igual
+        if [[ "$check_path" == "$excluded"* ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Menú interactivo para gestionar exclusiones
+manage_exclusions_menu() {
+    while true; do
+        print_header
+        print_section "${ICON_LOCK} GESTIÓN DE EXCLUSIONES"
+
+        show_exclusions
+
+        echo ""
+        echo -e "  ${WHITE}Opciones:${NC}"
+        echo -e "  ${CYAN}1)${NC} Agregar ruta"
+        echo -e "  ${CYAN}2)${NC} Eliminar ruta"
+        echo -e "  ${CYAN}3)${NC} Editar archivo manualmente"
+        echo -e "  ${CYAN}0)${NC} Volver"
+        echo ""
+
+        read -p "  Seleccione: " opt
+
+        case $opt in
+            1)
+                echo ""
+                read -e -p "  Ingrese la ruta a excluir: " new_path
+                if [[ -n "$new_path" ]]; then
+                    add_exclusion "$new_path"
+                fi
+                read -p "  Presione ENTER para continuar..."
+                ;;
+            2)
+                load_exclusions
+                if [[ ${#EXCLUDED_PATHS[@]} -eq 0 ]]; then
+                    print_status "info" "No hay rutas para eliminar"
+                else
+                    echo ""
+                    echo -e "  ${WHITE}Rutas actuales:${NC}"
+                    local i=1
+                    for path in "${EXCLUDED_PATHS[@]}"; do
+                        echo -e "  ${CYAN}$i)${NC} $path"
+                        ((i++))
+                    done
+                    echo ""
+                    read -p "  Número de ruta a eliminar (0 para cancelar): " num
+                    if [[ "$num" =~ ^[0-9]+$ ]] && [[ $num -gt 0 ]] && [[ $num -le ${#EXCLUDED_PATHS[@]} ]]; then
+                        remove_exclusion "${EXCLUDED_PATHS[$((num-1))]}"
+                    fi
+                fi
+                read -p "  Presione ENTER para continuar..."
+                ;;
+            3)
+                ${EDITOR:-nano} "$EXCLUSIONS_FILE"
+                ;;
+            0)
+                return
+                ;;
+        esac
+    done
+}
+
+# Bloqueo para evitar ejecuciones simultáneas
+acquire_lock() {
+    if [[ -f "$LOCK_FILE" ]]; then
+        local pid=$(cat "$LOCK_FILE" 2>/dev/null)
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            echo -e "${RED}Error: Otra instancia del script está en ejecución (PID: $pid)${NC}"
+            exit 1
+        fi
+        # El proceso anterior terminó, eliminar lock antiguo
+        rm -f "$LOCK_FILE"
+    fi
+    echo $$ > "$LOCK_FILE"
+    trap 'rm -f "$LOCK_FILE"' EXIT
+}
+
+print_header() {
+    clear
+    echo -e "${CYAN}"
+    cat << "EOF"
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   ██╗  ██╗ ██████╗ ██████╗ ██╗   ██╗███████╗    System Optimizer              ║
+║   ██║  ██║██╔═══██╗██╔══██╗██║   ██║██╔════╝    ─────────────────             ║
+║   ███████║██║   ██║██████╔╝██║   ██║███████╗    Arch Linux                    ║
+║   ██╔══██║██║   ██║██╔══██╗██║   ██║╚════██║    Complete Maintenance          ║
+║   ██║  ██║╚██████╔╝██║  ██║╚██████╔╝███████║    & Optimization Suite          ║
+║   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝                                  ║
+║                                                                               ║
+EOF
+    echo -e "║                                                        ${WHITE}v${VERSION}${CYAN}              ║"
+    echo "╚═══════════════════════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+}
+
+print_section() {
+    echo ""
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BOLD}${WHITE}  $1${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+print_subsection() {
+    echo ""
+    echo -e "  ${GRAY}┌─ ${WHITE}$1${GRAY} ─────────────────────────────────────────────────${NC}"
+}
+
+print_status() {
+    local status=$1
+    local message=$2
+    case $status in
+        "ok")      echo -e "  ${GREEN}${ICON_OK}${NC} ${message}" ;;
+        "fail")    echo -e "  ${RED}${ICON_FAIL}${NC} ${message}" ;;
+        "warn")    echo -e "  ${YELLOW}${ICON_WARN}${NC} ${message}" ;;
+        "info")    echo -e "  ${CYAN}${ICON_INFO}${NC} ${message}" ;;
+        "clean")   echo -e "  ${MAGENTA}${ICON_CLEAN}${NC} ${message}" ;;
+        "skip")    echo -e "  ${GRAY}○${NC} ${DIM}${message}${NC}" ;;
+    esac
+    log "$status: $message"
+}
+
+print_size() {
+    local path=$1
+    if [[ -d "$path" ]] || [[ -f "$path" ]]; then
+        du -sh "$path" 2>/dev/null | cut -f1
+    else
+        echo "0B"
+    fi
+}
+
+# Obtener tamaño en bytes de forma segura
+get_size_bytes() {
+    local path=$1
+    if [[ -d "$path" ]] || [[ -f "$path" ]]; then
+        local size=$(du -sb "$path" 2>/dev/null | cut -f1)
+        is_number "$size" && echo "$size" || echo "0"
+    else
+        echo "0"
+    fi
+}
+
+confirm_action() {
+    local message=$1
+    echo -e "\n${YELLOW}${ICON_WARN} ${message}${NC}"
+    read -p "  ¿Continuar? [s/N]: " -n 1 -r
+    echo
+    [[ $REPLY =~ ^[Ss]$ ]]
+}
+
+check_root() {
+    if [[ $EUID -eq 0 ]]; then
+        echo -e "${RED}No ejecutar como root. El script pedirá sudo cuando sea necesario.${NC}"
+        exit 1
+    fi
+}
+
+spinner() {
+    local pid=$1
+    local delay=0.1
+    local spinstr='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    while ps -p $pid &>/dev/null; do
+        for i in $(seq 0 9); do
+            printf "\r  ${CYAN}${spinstr:$i:1}${NC} %s" "$2"
+            sleep $delay
+        done
+    done
+    printf "\r"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DETECCIÓN DEL SISTEMA
+# ═══════════════════════════════════════════════════════════════════════════════
+
+detect_system() {
+    # Solo detectar una vez
+    if $SYSTEM_DETECTED; then
+        return
+    fi
+
+    print_subsection "Detectando configuración del sistema"
+
+    # Detectar laptop
+    if [[ -d /sys/class/power_supply/BAT0 ]] || [[ -d /sys/class/power_supply/BAT1 ]]; then
+        IS_LAPTOP=true
+        print_status "info" "Tipo: Laptop detectado"
+    else
+        print_status "info" "Tipo: Desktop detectado"
+    fi
+
+    # Detectar SSD
+    for disk in /sys/block/sd* /sys/block/nvme*; do
+        if [[ -f "$disk/queue/rotational" ]]; then
+            if [[ $(cat "$disk/queue/rotational") -eq 0 ]]; then
+                IS_SSD=true
+                break
+            fi
+        fi
+    done 2>/dev/null
+
+    if $IS_SSD; then
+        print_status "info" "Almacenamiento: SSD detectado"
+    else
+        print_status "info" "Almacenamiento: HDD detectado"
+    fi
+
+    # Detectar GPU
+    if lspci 2>/dev/null | grep -qi nvidia; then
+        HAS_NVIDIA=true
+        print_status "info" "GPU: NVIDIA detectada"
+    fi
+    if lspci 2>/dev/null | grep -qi "amd.*radeon\|amd.*graphics"; then
+        HAS_AMD=true
+        print_status "info" "GPU: AMD detectada"
+    fi
+    if lspci 2>/dev/null | grep -qi "intel.*graphics\|intel.*uhd\|intel.*iris"; then
+        HAS_INTEL=true
+        print_status "info" "GPU: Intel integrada detectada"
+    fi
+
+    # RAM total
+    TOTAL_RAM=$(free -g | awk '/^Mem:/ {print $2}')
+    is_number "$TOTAL_RAM" || TOTAL_RAM=0
+    print_status "info" "RAM: ${TOTAL_RAM}GB detectados"
+
+    SYSTEM_DETECTED=true
+}
+
+# Asegurar que el sistema esté detectado
+ensure_system_detected() {
+    if ! $SYSTEM_DETECTED; then
+        # Detectar silenciosamente
+        if [[ -d /sys/class/power_supply/BAT0 ]] || [[ -d /sys/class/power_supply/BAT1 ]]; then
+            IS_LAPTOP=true
+        fi
+        for disk in /sys/block/sd* /sys/block/nvme*; do
+            if [[ -f "$disk/queue/rotational" ]] && [[ $(cat "$disk/queue/rotational" 2>/dev/null) -eq 0 ]]; then
+                IS_SSD=true
+                break
+            fi
+        done 2>/dev/null
+        if lspci 2>/dev/null | grep -qi nvidia; then HAS_NVIDIA=true; fi
+        if lspci 2>/dev/null | grep -qi "amd.*radeon\|amd.*graphics"; then HAS_AMD=true; fi
+        if lspci 2>/dev/null | grep -qi "intel.*graphics\|intel.*uhd\|intel.*iris"; then HAS_INTEL=true; fi
+        TOTAL_RAM=$(free -g 2>/dev/null | awk '/^Mem:/ {print $2}')
+        is_number "$TOTAL_RAM" || TOTAL_RAM=0
+        SYSTEM_DETECTED=true
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# INFORMACIÓN DEL SISTEMA
+# ═══════════════════════════════════════════════════════════════════════════════
+
+show_system_info() {
+    print_section "${ICON_INFO} INFORMACIÓN DEL SISTEMA"
+
+    detect_system
+
+    echo -e "\n  ${GRAY}┌─────────────────────────────────────────────────────────────────────┐${NC}"
+
+    local hostname=$(hostname)
+    local kernel=$(uname -r)
+    local cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)
+    local cores=$(nproc)
+    local mem_total=$(free -h | awk '/^Mem:/ {print $2}')
+    local mem_used=$(free -h | awk '/^Mem:/ {print $3}')
+    local mem_percent=$(free | awk '/^Mem:/ {printf "%.1f", $3/$2 * 100}')
+    local disk_used=$(df -h / | awk 'NR==2 {print $3}')
+    local disk_total=$(df -h / | awk 'NR==2 {print $2}')
+    local disk_percent=$(df / | awk 'NR==2 {print $5}')
+    local uptime=$(uptime -p | sed 's/up //')
+    local pkgs=$(pacman -Q 2>/dev/null | wc -l)
+    local aur_pkgs=$(pacman -Qm 2>/dev/null | wc -l)
+
+    echo -e "  ${GRAY}│${NC} ${CYAN}Host:${NC}      $hostname"
+    echo -e "  ${GRAY}│${NC} ${CYAN}Kernel:${NC}    $kernel"
+    echo -e "  ${GRAY}│${NC} ${CYAN}CPU:${NC}       $cpu (${cores} cores)"
+    echo -e "  ${GRAY}│${NC} ${CYAN}RAM:${NC}       $mem_used / $mem_total (${mem_percent}%)"
+    echo -e "  ${GRAY}│${NC} ${CYAN}Disco:${NC}     $disk_used / $disk_total ($disk_percent)"
+    echo -e "  ${GRAY}│${NC} ${CYAN}Uptime:${NC}    $uptime"
+    echo -e "  ${GRAY}│${NC} ${CYAN}Paquetes:${NC}  $pkgs (oficial) + $aur_pkgs (AUR)"
+
+    if command -v flatpak &>/dev/null; then
+        local flatpaks=$(flatpak list 2>/dev/null | wc -l)
+        echo -e "  ${GRAY}│${NC} ${CYAN}Flatpak:${NC}   $flatpaks instalados"
+    fi
+
+    echo -e "  ${GRAY}└─────────────────────────────────────────────────────────────────────┘${NC}"
+}
+
+show_cleanup_analysis() {
+    print_section "${ICON_DISK} ANÁLISIS DE ESPACIO RECUPERABLE"
+
+    echo ""
+    printf "  ${WHITE}%-40s %-12s %-10s${NC}\n" "Área" "Tamaño" "Estado"
+    echo -e "  ${GRAY}───────────────────────────────────────────────────────────────────${NC}"
+
+    local total=0
+
+    # Caché de Pacman
+    local pacman_size=$(get_size_bytes /var/cache/pacman/pkg)
+    local pacman_hr=$(print_size /var/cache/pacman/pkg)
+    printf "  ${ICON_PACKAGE} %-38s ${YELLOW}%-12s${NC} Limpiar\n" "Caché Pacman" "$pacman_hr"
+    total=$((total + pacman_size))
+
+    # Paquetes huérfanos
+    local orphans=$(pacman -Qtdq 2>/dev/null | wc -l)
+    if [[ $orphans -gt 0 ]]; then
+        printf "  ${ICON_PACKAGE} %-38s ${YELLOW}%-12s${NC} Eliminar\n" "Paquetes huérfanos" "$orphans pkgs"
+    else
+        printf "  ${ICON_PACKAGE} %-38s ${GREEN}%-12s${NC} OK\n" "Paquetes huérfanos" "0 pkgs"
+    fi
+
+    # Journal
+    local journal_size=$(journalctl --disk-usage 2>/dev/null | grep -oP '\d+\.?\d*[GMK]' | head -1)
+    printf "  ${ICON_INFO} %-38s ${YELLOW}%-12s${NC} Limpiar\n" "Journal Logs" "${journal_size:-N/A}"
+
+    # Caché yay
+    if [[ -d ~/.cache/yay ]]; then
+        local yay_size=$(get_size_bytes ~/.cache/yay)
+        local yay_hr=$(print_size ~/.cache/yay)
+        printf "  ${ICON_PACKAGE} %-38s ${YELLOW}%-12s${NC} Limpiar\n" "Caché Yay/AUR" "$yay_hr"
+        total=$((total + yay_size))
+    fi
+
+    # Caché usuario
+    local cache_size=$(get_size_bytes ~/.cache)
+    local cache_hr=$(print_size ~/.cache)
+    printf "  ${ICON_TRASH} %-38s ${YELLOW}%-12s${NC} Limpiar*\n" "Caché Usuario" "$cache_hr"
+    total=$((total + cache_size))
+
+    # Thumbnails
+    local thumb_hr=$(print_size ~/.cache/thumbnails)
+    printf "  ${ICON_TRASH} %-38s ${YELLOW}%-12s${NC} Limpiar\n" "Thumbnails" "$thumb_hr"
+
+    # Papelera
+    if [[ -d ~/.local/share/Trash ]]; then
+        local trash_size=$(get_size_bytes ~/.local/share/Trash)
+        local trash_hr=$(print_size ~/.local/share/Trash)
+        printf "  ${ICON_TRASH} %-38s ${YELLOW}%-12s${NC} Vaciar\n" "Papelera" "$trash_hr"
+        total=$((total + trash_size))
+    fi
+
+    # Flatpak
+    if command -v flatpak &>/dev/null; then
+        local flatpak_unused=$(flatpak uninstall --unused 2>&1 | grep -c "^[0-9]" || echo "0")
+        printf "  ${ICON_PACKAGE} %-38s ${YELLOW}%-12s${NC} Limpiar\n" "Flatpak (sin usar)" "$flatpak_unused items"
+    fi
+
+    # Coredumps
+    if [[ -d /var/lib/systemd/coredump ]]; then
+        local coredump_hr=$(print_size /var/lib/systemd/coredump)
+        printf "  ${ICON_TRASH} %-38s ${YELLOW}%-12s${NC} Limpiar\n" "Coredumps" "$coredump_hr"
+    fi
+
+    echo -e "  ${GRAY}───────────────────────────────────────────────────────────────────${NC}"
+    local total_hr=$(format_bytes $total)
+    echo -e "  ${WHITE}Total aproximado recuperable: ${GREEN}$total_hr${NC}"
+    echo -e "  ${GRAY}* Excluye navegadores (Brave, Firefox, Chrome, etc.)${NC}"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MÓDULO DE LIMPIEZA
+# ═══════════════════════════════════════════════════════════════════════════════
+
+clean_pacman_cache() {
+    print_subsection "Caché de Pacman"
+
+    local before=$(get_size_bytes /var/cache/pacman/pkg)
+
+    if command -v paccache &>/dev/null; then
+        sudo paccache -rk2 2>/dev/null
+        sudo paccache -ruk0 2>/dev/null
+        print_status "ok" "Caché limpiado (manteniendo 2 versiones)"
+    else
+        print_status "warn" "Instalando pacman-contrib..."
+        sudo pacman -S --noconfirm pacman-contrib 2>/dev/null
+        if command -v paccache &>/dev/null; then
+            sudo paccache -rk2 2>/dev/null
+        fi
+    fi
+
+    local after=$(get_size_bytes /var/cache/pacman/pkg)
+    local saved=$(safe_subtract "$before" "$after")
+    local saved_hr=$(format_bytes "$saved")
+    print_status "clean" "Espacio liberado: ${GREEN}$saved_hr${NC}"
+}
+
+clean_orphan_packages() {
+    print_subsection "Paquetes Huérfanos"
+
+    local orphans=$(pacman -Qtdq 2>/dev/null)
+
+    if [[ -n "$orphans" ]]; then
+        local count=$(echo "$orphans" | wc -l)
+        print_status "info" "Encontrados $count paquetes huérfanos:"
+
+        # Mostrar lista para verificación
+        echo "$orphans" | head -10 | while read pkg; do
+            echo -e "    ${GRAY}└─${NC} $pkg"
+        done
+        if [[ $count -gt 10 ]]; then
+            echo -e "    ${GRAY}└─${NC} ... y $((count - 10)) más"
+        fi
+
+        # Confirmar antes de eliminar (SEGURIDAD)
+        if confirm_action "¿Eliminar estos $count paquetes huérfanos?"; then
+            # Usar archivo temporal para evitar problemas de pipe
+            local tmpfile=$(mktemp)
+            echo "$orphans" > "$tmpfile"
+            if sudo pacman -Rns --noconfirm - < "$tmpfile" 2>/dev/null; then
+                print_status "ok" "Paquetes huérfanos eliminados"
+            else
+                print_status "warn" "Algunos paquetes no pudieron eliminarse"
+            fi
+            rm -f "$tmpfile"
+        else
+            print_status "skip" "Operación cancelada por el usuario"
+        fi
+    else
+        print_status "ok" "No hay paquetes huérfanos"
+    fi
+}
+
+clean_journal_logs() {
+    print_subsection "Journal Logs"
+
+    local before=$(journalctl --disk-usage 2>/dev/null | grep -oP '\d+\.?\d*[GMK]' | head -1)
+    print_status "info" "Tamaño actual: ${before:-N/A}"
+
+    sudo journalctl --vacuum-time=7d 2>/dev/null
+    sudo journalctl --vacuum-size=500M 2>/dev/null
+
+    local after=$(journalctl --disk-usage 2>/dev/null | grep -oP '\d+\.?\d*[GMK]' | head -1)
+    print_status "clean" "Nuevo tamaño: ${GREEN}${after:-N/A}${NC}"
+}
+
+clean_yay_cache() {
+    print_subsection "Caché Yay/AUR"
+
+    if [[ -d ~/.cache/yay ]]; then
+        local before=$(get_size_bytes ~/.cache/yay)
+
+        if command -v yay &>/dev/null; then
+            yay -Scc --noconfirm 2>/dev/null
+            # Solo eliminar subdirectorios de build, no todo el caché
+            find ~/.cache/yay -mindepth 2 -type d -name "src" -exec rm -rf {} \; 2>/dev/null
+            find ~/.cache/yay -mindepth 2 -type d -name "pkg" -exec rm -rf {} \; 2>/dev/null
+
+            local after=$(get_size_bytes ~/.cache/yay)
+            local saved=$(safe_subtract "$before" "$after")
+            local saved_hr=$(format_bytes "$saved")
+            print_status "clean" "Espacio liberado: ${GREEN}$saved_hr${NC}"
+        fi
+    else
+        print_status "ok" "No hay caché de yay"
+    fi
+}
+
+clean_user_cache() {
+    print_subsection "Caché de Usuario"
+
+    print_status "warn" "Excluyendo navegadores..."
+    local before=$(get_size_bytes ~/.cache)
+
+    # Limpiar thumbnails (seguro)
+    if [[ -d ~/.cache/thumbnails ]]; then
+        rm -rf ~/.cache/thumbnails/* 2>/dev/null
+    fi
+
+    # Limpiar cachés específicos (excluyendo navegadores)
+    for dir in ~/.cache/*/; do
+        [[ -d "$dir" ]] || continue
+        local dirname=$(basename "$dir")
+        local skip=false
+
+        for browser in "${EXCLUDED_BROWSERS[@]}"; do
+            if [[ "${dirname,,}" == *"${browser,,}"* ]]; then
+                skip=true
+                break
+            fi
+        done
+
+        if [[ "$skip" == false ]]; then
+            # Solo eliminar archivos viejos (más de 30 días), no todo
+            find "$dir" -type f -atime +30 -delete 2>/dev/null
+        fi
+    done
+
+    local after=$(get_size_bytes ~/.cache)
+    local saved=$(safe_subtract "$before" "$after")
+    local saved_hr=$(format_bytes "$saved")
+    print_status "clean" "Espacio liberado: ${GREEN}$saved_hr${NC}"
+}
+
+clean_trash() {
+    print_subsection "Papelera"
+
+    if [[ -d ~/.local/share/Trash ]]; then
+        local size=$(print_size ~/.local/share/Trash)
+        print_status "info" "Tamaño: $size"
+
+        # Solo limpiar si hay contenido
+        if [[ -d ~/.local/share/Trash/files ]] && [[ -n "$(ls -A ~/.local/share/Trash/files 2>/dev/null)" ]]; then
+            rm -rf ~/.local/share/Trash/files/* 2>/dev/null
+            rm -rf ~/.local/share/Trash/info/* 2>/dev/null
+            rm -rf ~/.local/share/Trash/expunged/* 2>/dev/null
+            print_status "ok" "Papelera vaciada"
+        else
+            print_status "ok" "Papelera ya vacía"
+        fi
+    else
+        print_status "ok" "Papelera vacía"
+    fi
+}
+
+clean_flatpak() {
+    print_subsection "Flatpak"
+
+    if command -v flatpak &>/dev/null; then
+        flatpak uninstall --unused -y 2>/dev/null
+
+        # Limpiar caché (excluyendo navegadores)
+        for app_cache in ~/.var/app/*/cache/; do
+            [[ -d "$app_cache" ]] || continue
+            local app_name=$(basename "$(dirname "$app_cache")")
+            local skip=false
+
+            for browser in "${EXCLUDED_BROWSERS[@]}"; do
+                if [[ "${app_name,,}" == *"${browser,,}"* ]]; then
+                    skip=true
+                    break
+                fi
+            done
+
+            if [[ "$skip" == false ]]; then
+                find "$app_cache" -type f -atime +30 -delete 2>/dev/null
+            fi
+        done
+
+        print_status "ok" "Flatpak limpiado"
+    else
+        print_status "skip" "Flatpak no instalado"
+    fi
+}
+
+clean_coredumps() {
+    print_subsection "Coredumps"
+
+    if [[ -d /var/lib/systemd/coredump ]] && [[ -n "$(ls -A /var/lib/systemd/coredump 2>/dev/null)" ]]; then
+        sudo rm -rf /var/lib/systemd/coredump/* 2>/dev/null
+        print_status "ok" "Coredumps eliminados"
+    else
+        print_status "ok" "No hay coredumps"
+    fi
+}
+
+clean_tmp() {
+    print_subsection "Archivos Temporales"
+
+    # Solo archivos del usuario actual en /tmp, archivos viejos
+    find /tmp -maxdepth 1 -user "$USER" -type f -atime +7 -delete 2>/dev/null
+    # En var/tmp solo archivos muy viejos
+    sudo find /var/tmp -type f -atime +30 -delete 2>/dev/null
+
+    # Limpiar caché de pip (seguro)
+    if [[ -d ~/.cache/pip ]]; then
+        rm -rf ~/.cache/pip/* 2>/dev/null
+        print_status "ok" "Caché pip limpiado"
+    fi
+
+    # Limpiar caché de npm
+    if command -v npm &>/dev/null; then
+        npm cache clean --force 2>/dev/null
+        print_status "ok" "Caché npm limpiado"
+    fi
+
+    # Limpiar caché de cargo (solo cache, no registry completo)
+    if [[ -d ~/.cargo/registry/cache ]]; then
+        rm -rf ~/.cargo/registry/cache/* 2>/dev/null
+        print_status "ok" "Caché cargo limpiado"
+    fi
+
+    print_status "ok" "Archivos temporales limpiados"
+}
+
+clean_old_kernels() {
+    print_subsection "Kernels Antiguos"
+
+    local current_kernel=$(uname -r | sed 's/-.*//g')
+    local installed_kernels=$(pacman -Q | grep -E "^linux[0-9]* " | wc -l)
+
+    if [[ $installed_kernels -gt 1 ]]; then
+        print_status "info" "Hay $installed_kernels kernels instalados"
+        print_status "info" "Kernel actual: $current_kernel"
+        print_status "warn" "Revisar manualmente si deseas eliminar kernels antiguos"
+    else
+        print_status "ok" "Solo hay un kernel instalado"
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MÓDULO DE OPTIMIZACIÓN DE RENDIMIENTO
+# ═══════════════════════════════════════════════════════════════════════════════
+
+optimize_io_scheduler() {
+    print_subsection "I/O Scheduler"
+
+    for disk in /sys/block/sd* /sys/block/nvme*; do
+        [[ -f "$disk/queue/scheduler" ]] || continue
+
+        local disk_name=$(basename "$disk")
+        local rotational=$(cat "$disk/queue/rotational" 2>/dev/null)
+        local current=$(cat "$disk/queue/scheduler" 2>/dev/null | grep -oP '\[\K[^\]]+')
+
+        if [[ "$rotational" == "0" ]]; then
+            # SSD/NVMe - usar none o mq-deadline
+            if grep -q "none" "$disk/queue/scheduler" 2>/dev/null; then
+                echo "none" | sudo tee "$disk/queue/scheduler" >/dev/null 2>&1
+                print_status "ok" "$disk_name (SSD): scheduler = none"
+            elif grep -q "mq-deadline" "$disk/queue/scheduler" 2>/dev/null; then
+                echo "mq-deadline" | sudo tee "$disk/queue/scheduler" >/dev/null 2>&1
+                print_status "ok" "$disk_name (SSD): scheduler = mq-deadline"
+            fi
+        else
+            # HDD - usar bfq
+            if grep -q "bfq" "$disk/queue/scheduler" 2>/dev/null; then
+                echo "bfq" | sudo tee "$disk/queue/scheduler" >/dev/null 2>&1
+                print_status "ok" "$disk_name (HDD): scheduler = bfq"
+            fi
+        fi
+    done 2>/dev/null
+}
+
+optimize_cpu_governor() {
+    print_subsection "CPU Governor"
+
+    ensure_system_detected
+
+    if [[ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]]; then
+        local current=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)
+        local available=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors 2>/dev/null)
+
+        print_status "info" "Governor actual: $current"
+        print_status "info" "Disponibles: ${available:-N/A}"
+
+        # Recomendar según tipo de sistema
+        if $IS_LAPTOP; then
+            if echo "$available" | grep -q "schedutil"; then
+                for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+                    [[ -f "$cpu" ]] && echo "schedutil" | sudo tee "$cpu" >/dev/null 2>&1
+                done
+                print_status "ok" "Cambiado a schedutil (óptimo para laptop)"
+            fi
+        else
+            if echo "$available" | grep -q "performance"; then
+                print_status "info" "Recomendado: 'performance' para desktop"
+            fi
+        fi
+    else
+        print_status "skip" "CPU frequency scaling no disponible"
+    fi
+}
+
+optimize_swappiness() {
+    print_subsection "Swappiness y Memoria"
+
+    ensure_system_detected
+
+    local current=$(cat /proc/sys/vm/swappiness 2>/dev/null)
+    print_status "info" "Swappiness actual: ${current:-N/A}"
+
+    # Crear archivo de configuración sysctl
+    local sysctl_file="/etc/sysctl.d/99-h0rus-performance.conf"
+
+    if [[ $TOTAL_RAM -ge 16 ]]; then
+        # RAM >= 16GB: swappiness bajo
+        cat << 'EOF' | sudo tee "$sysctl_file" >/dev/null
+# H0RUS Performance Tuning
+# Optimizado para sistemas con mucha RAM
+
+# Swappiness (0-200, menor = menos swap)
+vm.swappiness = 10
+
+# Presión de caché
+vm.vfs_cache_pressure = 50
+
+# Dirty ratio (escritura diferida)
+vm.dirty_ratio = 10
+vm.dirty_background_ratio = 5
+
+# Overcommit memory
+vm.overcommit_memory = 0
+vm.overcommit_ratio = 50
+
+# Tamaño máximo de memoria compartida
+kernel.shmmax = 4294967296
+kernel.shmall = 4194304
+EOF
+        print_status "ok" "Configuración optimizada para ${TOTAL_RAM}GB RAM"
+    else
+        # RAM < 16GB
+        cat << 'EOF' | sudo tee "$sysctl_file" >/dev/null
+# H0RUS Performance Tuning
+# Optimizado para sistemas con RAM moderada
+
+vm.swappiness = 30
+vm.vfs_cache_pressure = 100
+vm.dirty_ratio = 20
+vm.dirty_background_ratio = 10
+EOF
+        print_status "ok" "Configuración optimizada para ${TOTAL_RAM}GB RAM"
+    fi
+
+    sudo sysctl --system >/dev/null 2>&1
+    print_status "ok" "Configuración aplicada"
+}
+
+optimize_zram() {
+    print_subsection "ZRAM/ZSWAP"
+
+    # Verificar zswap
+    if [[ -f /sys/module/zswap/parameters/enabled ]]; then
+        local zswap_enabled=$(cat /sys/module/zswap/parameters/enabled 2>/dev/null)
+        if [[ "$zswap_enabled" == "Y" ]]; then
+            print_status "info" "ZSWAP habilitado (compresión de swap)"
+
+            # Configurar zswap óptimamente (solo si los archivos existen)
+            [[ -f /sys/module/zswap/parameters/compressor ]] && \
+                echo "lz4" | sudo tee /sys/module/zswap/parameters/compressor >/dev/null 2>&1
+            [[ -f /sys/module/zswap/parameters/zpool ]] && \
+                echo "z3fold" | sudo tee /sys/module/zswap/parameters/zpool >/dev/null 2>&1
+            [[ -f /sys/module/zswap/parameters/max_pool_percent ]] && \
+                echo "25" | sudo tee /sys/module/zswap/parameters/max_pool_percent >/dev/null 2>&1
+
+            print_status "ok" "ZSWAP optimizado (lz4, z3fold, 25%)"
+        fi
+    fi
+
+    # Verificar zram
+    if [[ -b /dev/zram0 ]]; then
+        local zram_size=$(zramctl 2>/dev/null | awk 'NR==2 {print $3}')
+        print_status "info" "ZRAM activo: ${zram_size:-N/A}"
+    else
+        print_status "info" "ZRAM no configurado"
+        print_status "info" "Instala 'zram-generator' para habilitarlo"
+    fi
+}
+
+optimize_network() {
+    print_subsection "Optimización de Red (TCP/IP)"
+
+    local sysctl_net="/etc/sysctl.d/99-h0rus-network.conf"
+
+    cat << 'EOF' | sudo tee "$sysctl_net" >/dev/null
+# H0RUS Network Performance Tuning
+
+# Aumentar buffers de red
+net.core.rmem_default = 1048576
+net.core.rmem_max = 16777216
+net.core.wmem_default = 1048576
+net.core.wmem_max = 16777216
+net.core.optmem_max = 65536
+
+# TCP buffers
+net.ipv4.tcp_rmem = 4096 1048576 2097152
+net.ipv4.tcp_wmem = 4096 65536 16777216
+
+# Usar BBR como algoritmo de congestión
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+
+# Conexiones y backlog
+net.core.somaxconn = 8192
+net.core.netdev_max_backlog = 16384
+net.ipv4.tcp_max_syn_backlog = 8192
+
+# Keepalive
+net.ipv4.tcp_keepalive_time = 600
+net.ipv4.tcp_keepalive_intvl = 60
+net.ipv4.tcp_keepalive_probes = 5
+
+# Timeouts
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_tw_reuse = 1
+
+# Otros
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_timestamps = 1
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_window_scaling = 1
+EOF
+
+    sudo sysctl --system >/dev/null 2>&1
+
+    # Verificar BBR
+    local congestion=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
+    if [[ "$congestion" == "bbr" ]]; then
+        print_status "ok" "BBR habilitado (algoritmo de congestión óptimo)"
+    else
+        print_status "warn" "BBR no disponible, usando: ${congestion:-cubic}"
+    fi
+
+    print_status "ok" "Configuración de red aplicada"
+}
+
+optimize_filesystem() {
+    print_subsection "Sistema de Archivos"
+
+    ensure_system_detected
+
+    # Verificar opciones de montaje
+    print_status "info" "Verificando opciones de montaje..."
+
+    local fstab_suggestions=""
+
+    while read -r line; do
+        [[ "$line" =~ ^# ]] && continue
+        [[ -z "$line" ]] && continue
+
+        local mount_point=$(echo "$line" | awk '{print $2}')
+        local options=$(echo "$line" | awk '{print $4}')
+
+        if [[ "$mount_point" == "/" ]] || [[ "$mount_point" == "/home" ]]; then
+            if ! echo "$options" | grep -q "noatime"; then
+                fstab_suggestions+="  - Añadir 'noatime' a $mount_point (reduce escrituras)\n"
+            fi
+        fi
+    done < /etc/fstab
+
+    if [[ -n "$fstab_suggestions" ]]; then
+        print_status "info" "Sugerencias para /etc/fstab:"
+        echo -e "$fstab_suggestions"
+    else
+        print_status "ok" "Opciones de montaje óptimas"
+    fi
+
+    # Verificar TRIM para SSD
+    if $IS_SSD; then
+        if systemctl is-enabled fstrim.timer &>/dev/null; then
+            print_status "ok" "TRIM periódico habilitado"
+        else
+            sudo systemctl enable --now fstrim.timer 2>/dev/null
+            print_status "ok" "TRIM periódico habilitado"
+        fi
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MÓDULO DE SEGURIDAD
+# ═══════════════════════════════════════════════════════════════════════════════
+
+check_permissions() {
+    print_subsection "Permisos de Archivos Sensibles"
+
+    local issues=0
+
+    # Verificar permisos de archivos críticos
+    local files_600=(
+        "$HOME/.ssh/id_rsa"
+        "$HOME/.ssh/id_ed25519"
+        "$HOME/.ssh/id_ecdsa"
+        "$HOME/.gnupg/secring.gpg"
+        "$HOME/.gnupg/private-keys-v1.d"
+    )
+
+    local files_700=(
+        "$HOME/.ssh"
+        "$HOME/.gnupg"
+    )
+
+    for file in "${files_600[@]}"; do
+        if [[ -f "$file" ]]; then
+            local perms=$(stat -c %a "$file" 2>/dev/null)
+            if [[ "$perms" != "600" ]]; then
+                chmod 600 "$file"
+                print_status "warn" "Corregido: $file (era $perms, ahora 600)"
+                ((issues++))
+            fi
+        fi
+    done
+
+    for dir in "${files_700[@]}"; do
+        if [[ -d "$dir" ]]; then
+            local perms=$(stat -c %a "$dir" 2>/dev/null)
+            if [[ "$perms" != "700" ]]; then
+                chmod 700 "$dir"
+                print_status "warn" "Corregido: $dir (era $perms, ahora 700)"
+                ((issues++))
+            fi
+        fi
+    done
+
+    if [[ $issues -eq 0 ]]; then
+        print_status "ok" "Todos los permisos correctos"
+    else
+        print_status "ok" "Corregidos $issues problemas de permisos"
+    fi
+}
+
+check_suid_files() {
+    print_subsection "Archivos SUID/SGID"
+
+    print_status "info" "Buscando archivos SUID/SGID..."
+
+    local suid_files=$(find /usr/bin /usr/sbin -perm /4000 2>/dev/null | wc -l)
+    local sgid_files=$(find /usr/bin /usr/sbin -perm /2000 2>/dev/null | wc -l)
+
+    print_status "info" "SUID: $suid_files archivos, SGID: $sgid_files archivos"
+
+    # Buscar archivos sospechosos en /tmp o /home
+    local suspicious=$(find /tmp "$HOME" -perm /4000 -type f 2>/dev/null | head -5)
+    if [[ -n "$suspicious" ]]; then
+        print_status "warn" "Archivos SUID en ubicaciones sospechosas:"
+        echo "$suspicious" | while read f; do
+            echo -e "    ${RED}$f${NC}"
+        done
+    else
+        print_status "ok" "No hay archivos SUID sospechosos"
+    fi
+}
+
+check_firewall() {
+    print_subsection "Firewall"
+
+    # Verificar iptables
+    if command -v iptables &>/dev/null; then
+        local rules=$(sudo iptables -L -n 2>/dev/null | grep -c "^Chain")
+        if [[ $rules -gt 0 ]]; then
+            local input_policy=$(sudo iptables -L INPUT -n 2>/dev/null | head -1 | grep -oP 'policy \K\w+')
+            print_status "ok" "iptables activo (INPUT policy: ${input_policy:-ACCEPT})"
+        else
+            print_status "warn" "iptables sin reglas configuradas"
+        fi
+    fi
+
+    # Verificar nftables
+    if command -v nft &>/dev/null; then
+        if sudo nft list tables 2>/dev/null | grep -q .; then
+            print_status "ok" "nftables activo"
+        fi
+    fi
+
+    # Verificar ufw
+    if command -v ufw &>/dev/null; then
+        if sudo ufw status 2>/dev/null | grep -q "active"; then
+            print_status "ok" "UFW activo"
+        else
+            print_status "info" "UFW instalado pero inactivo"
+        fi
+    fi
+}
+
+check_ssh_security() {
+    print_subsection "Seguridad SSH"
+
+    if [[ -f /etc/ssh/sshd_config ]]; then
+        # Verificar configuraciones de seguridad
+        if grep -qE "^PermitRootLogin\s+(yes|without-password)" /etc/ssh/sshd_config 2>/dev/null; then
+            print_status "warn" "Root login habilitado - considerar deshabilitarlo"
+        else
+            print_status "ok" "Root login deshabilitado o restringido"
+        fi
+
+        if grep -qE "^PasswordAuthentication\s+yes" /etc/ssh/sshd_config 2>/dev/null; then
+            print_status "info" "Autenticación por contraseña habilitada"
+        else
+            print_status "ok" "Solo autenticación por clave SSH"
+        fi
+
+        if grep -qE "^X11Forwarding\s+yes" /etc/ssh/sshd_config 2>/dev/null; then
+            print_status "info" "X11 Forwarding habilitado"
+        fi
+
+    else
+        print_status "skip" "SSH no instalado"
+    fi
+}
+
+check_failed_logins() {
+    print_subsection "Intentos de Login Fallidos"
+
+    local failed=$(journalctl -u sshd --since "24 hours ago" 2>/dev/null | grep -c "Failed password" || echo "0")
+
+    if [[ $failed -gt 100 ]]; then
+        print_status "warn" "$failed intentos fallidos en las últimas 24h"
+        print_status "info" "Considera instalar fail2ban"
+    elif [[ $failed -gt 0 ]]; then
+        print_status "info" "$failed intentos fallidos en las últimas 24h"
+    else
+        print_status "ok" "Sin intentos de login fallidos"
+    fi
+}
+
+check_package_integrity() {
+    print_subsection "Integridad de Paquetes"
+
+    print_status "info" "Verificando paquetes modificados..."
+
+    local modified=$(pacman -Qkk 2>&1 | grep -c "warning" || echo "0")
+
+    if [[ $modified -gt 0 ]]; then
+        print_status "warn" "$modified archivos de paquetes modificados"
+        print_status "info" "Ejecuta 'pacman -Qkk 2>&1 | grep warning' para ver detalles"
+    else
+        print_status "ok" "Todos los paquetes íntegros"
+    fi
+}
+
+audit_users() {
+    print_subsection "Auditoría de Usuarios"
+
+    # Usuarios con UID 0
+    local root_users=$(awk -F: '$3 == 0 {print $1}' /etc/passwd | tr '\n' ' ')
+    if [[ "$root_users" != "root " ]]; then
+        print_status "warn" "Usuarios con UID 0: $root_users"
+    else
+        print_status "ok" "Solo root tiene UID 0"
+    fi
+
+    # Usuarios con shell válida
+    local shell_users=$(grep -v "nologin\|false" /etc/passwd | wc -l)
+    print_status "info" "$shell_users usuarios con shell válida"
+
+    # Cuentas sin contraseña
+    local no_pass=$(sudo awk -F: '($2 == "" ) {print $1}' /etc/shadow 2>/dev/null | wc -l)
+    if [[ $no_pass -gt 0 ]]; then
+        print_status "warn" "$no_pass cuentas sin contraseña"
+    else
+        print_status "ok" "Todas las cuentas tienen contraseña"
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MÓDULO DE MONITOREO
+# ═══════════════════════════════════════════════════════════════════════════════
+
+check_temperatures() {
+    print_subsection "Temperaturas del Sistema"
+
+    ensure_system_detected
+
+    if command -v sensors &>/dev/null; then
+        local temps=$(sensors 2>/dev/null)
+
+        # CPU temp
+        local cpu_temp=$(echo "$temps" | grep -E "Core 0|Tctl|CPU" | head -1 | grep -oP '\+\d+\.\d+' | head -1)
+        if [[ -n "$cpu_temp" ]]; then
+            local temp_val=$(echo "$cpu_temp" | tr -d '+' | cut -d'.' -f1)
+            if is_number "$temp_val"; then
+                if [[ $temp_val -gt 80 ]]; then
+                    print_status "warn" "CPU: ${cpu_temp}°C (alta)"
+                elif [[ $temp_val -gt 60 ]]; then
+                    print_status "info" "CPU: ${cpu_temp}°C (normal)"
+                else
+                    print_status "ok" "CPU: ${cpu_temp}°C"
+                fi
+            fi
+        fi
+
+        # GPU temp (NVIDIA)
+        if $HAS_NVIDIA && command -v nvidia-smi &>/dev/null; then
+            local gpu_temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null)
+            if [[ -n "$gpu_temp" ]] && is_number "$gpu_temp"; then
+                if [[ $gpu_temp -gt 80 ]]; then
+                    print_status "warn" "GPU NVIDIA: ${gpu_temp}°C (alta)"
+                else
+                    print_status "ok" "GPU NVIDIA: ${gpu_temp}°C"
+                fi
+            fi
+        fi
+
+        # Discos
+        if command -v smartctl &>/dev/null; then
+            for disk in /dev/sd? /dev/nvme?n1; do
+                [[ -b "$disk" ]] || continue
+                local disk_temp=$(sudo smartctl -A "$disk" 2>/dev/null | grep -i "temperature" | head -1 | awk '{print $(NF-1)}')
+                if [[ -n "$disk_temp" ]] && is_number "$disk_temp"; then
+                    print_status "ok" "$(basename "$disk"): ${disk_temp}°C"
+                fi
+            done
+        fi
+    else
+        print_status "info" "Instala 'lm_sensors' para ver temperaturas"
+    fi
+}
+
+check_battery() {
+    print_subsection "Batería"
+
+    ensure_system_detected
+
+    if $IS_LAPTOP; then
+        for bat in /sys/class/power_supply/BAT*; do
+            [[ -d "$bat" ]] || continue
+
+            local bat_name=$(basename "$bat")
+            local capacity=$(cat "$bat/capacity" 2>/dev/null)
+            local status=$(cat "$bat/status" 2>/dev/null)
+            local health=""
+
+            # Calcular salud de batería
+            if [[ -f "$bat/charge_full" ]] && [[ -f "$bat/charge_full_design" ]]; then
+                local full=$(cat "$bat/charge_full" 2>/dev/null)
+                local design=$(cat "$bat/charge_full_design" 2>/dev/null)
+                if is_number "$full" && is_number "$design" && [[ $design -gt 0 ]]; then
+                    health=$((full * 100 / design))
+                fi
+            fi
+
+            if [[ -n "$health" ]]; then
+                print_status "info" "$bat_name: ${capacity:-?}% (${status:-?}) - Salud: ${health}%"
+            else
+                print_status "info" "$bat_name: ${capacity:-?}% (${status:-?})"
+            fi
+        done
+    else
+        print_status "skip" "No es un laptop"
+    fi
+}
+
+check_disk_health() {
+    print_subsection "Salud de Discos (SMART)"
+
+    if command -v smartctl &>/dev/null; then
+        for disk in /dev/sd? /dev/nvme?n1; do
+            [[ -b "$disk" ]] || continue
+
+            local disk_name=$(basename "$disk")
+            local health=$(sudo smartctl -H "$disk" 2>/dev/null | grep -i "result\|overall" | awk '{print $NF}')
+
+            if [[ "$health" == "PASSED" ]] || [[ "$health" == "OK" ]]; then
+                print_status "ok" "$disk_name: SMART OK"
+            elif [[ -n "$health" ]]; then
+                print_status "warn" "$disk_name: Revisar estado SMART"
+            fi
+
+            # Verificar sectores realocados
+            local reallocated=$(sudo smartctl -A "$disk" 2>/dev/null | grep -i "reallocated" | awk '{print $NF}')
+            if [[ -n "$reallocated" ]] && is_number "$reallocated" && [[ $reallocated -gt 0 ]]; then
+                print_status "warn" "$disk_name: $reallocated sectores realocados"
+            fi
+        done
+    else
+        print_status "info" "Instala 'smartmontools' para verificar salud de discos"
+    fi
+}
+
+check_failed_services() {
+    print_subsection "Servicios del Sistema"
+
+    local failed=$(systemctl --failed --no-pager 2>/dev/null | grep -c "failed" || echo "0")
+
+    if [[ $failed -gt 0 ]]; then
+        print_status "warn" "$failed servicios fallidos:"
+        systemctl --failed --no-pager 2>/dev/null | grep "●" | while read line; do
+            local service=$(echo "$line" | awk '{print $2}')
+            echo -e "    ${RED}└─${NC} $service"
+        done
+    else
+        print_status "ok" "Todos los servicios OK"
+    fi
+}
+
+check_boot_time() {
+    print_subsection "Análisis de Arranque"
+
+    if command -v systemd-analyze &>/dev/null; then
+        local boot_time=$(systemd-analyze 2>/dev/null | head -1)
+        print_status "info" "$boot_time"
+
+        # Servicios más lentos
+        print_status "info" "Top 5 servicios más lentos:"
+        systemd-analyze blame 2>/dev/null | head -5 | while read line; do
+            echo -e "    ${GRAY}└─${NC} $line"
+        done
+    fi
+}
+
+check_recent_errors() {
+    print_subsection "Errores Recientes"
+
+    local errors=$(journalctl -p err --since "24 hours ago" 2>/dev/null | wc -l)
+    local criticals=$(journalctl -p crit --since "24 hours ago" 2>/dev/null | wc -l)
+
+    if [[ $criticals -gt 0 ]]; then
+        print_status "warn" "$criticals errores críticos en 24h"
+    fi
+
+    if [[ $errors -gt 100 ]]; then
+        print_status "warn" "$errors errores en 24h (alto)"
+    elif [[ $errors -gt 0 ]]; then
+        print_status "info" "$errors errores en 24h"
+    else
+        print_status "ok" "Sin errores en 24h"
+    fi
+}
+
+show_resource_usage() {
+    print_subsection "Uso de Recursos"
+
+    # Top procesos por CPU
+    print_status "info" "Top 5 procesos por CPU:"
+    ps aux --sort=-%cpu 2>/dev/null | head -6 | tail -5 | while read line; do
+        local proc=$(echo "$line" | awk '{print $11}' | rev | cut -d'/' -f1 | rev | head -c 20)
+        local cpu=$(echo "$line" | awk '{print $3}')
+        local mem=$(echo "$line" | awk '{print $4}')
+        echo -e "    ${GRAY}└─${NC} $proc (CPU: ${cpu}%, MEM: ${mem}%)"
+    done
+
+    # Top procesos por memoria
+    echo ""
+    print_status "info" "Top 5 procesos por Memoria:"
+    ps aux --sort=-%mem 2>/dev/null | head -6 | tail -5 | while read line; do
+        local proc=$(echo "$line" | awk '{print $11}' | rev | cut -d'/' -f1 | rev | head -c 20)
+        local mem=$(echo "$line" | awk '{print $4}')
+        echo -e "    ${GRAY}└─${NC} $proc (MEM: ${mem}%)"
+    done
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MÓDULO DE BACKUP
+# ═══════════════════════════════════════════════════════════════════════════════
+
+backup_package_list() {
+    print_subsection "Lista de Paquetes"
+
+    local date=$(date +%Y%m%d)
+
+    # Paquetes oficiales
+    pacman -Qqe > "$BACKUP_DIR/packages-official-$date.txt" 2>/dev/null
+    print_status "ok" "Paquetes oficiales: $BACKUP_DIR/packages-official-$date.txt"
+
+    # Paquetes AUR
+    pacman -Qqm > "$BACKUP_DIR/packages-aur-$date.txt" 2>/dev/null
+    print_status "ok" "Paquetes AUR: $BACKUP_DIR/packages-aur-$date.txt"
+
+    # Flatpak
+    if command -v flatpak &>/dev/null; then
+        flatpak list --app --columns=application > "$BACKUP_DIR/packages-flatpak-$date.txt" 2>/dev/null
+        print_status "ok" "Flatpaks: $BACKUP_DIR/packages-flatpak-$date.txt"
+    fi
+
+    print_status "info" "Para restaurar: pacman -S --needed - < packages-official.txt"
+}
+
+backup_configs() {
+    print_subsection "Configuraciones"
+
+    local date=$(date +%Y%m%d)
+    local backup_file="$BACKUP_DIR/configs-$date.tar.gz"
+
+    # Lista de archivos a respaldar
+    local configs=(
+        "/etc/fstab"
+        "/etc/pacman.conf"
+        "/etc/mkinitcpio.conf"
+        "/etc/default/grub"
+        "/etc/sysctl.d"
+        "/etc/modprobe.d"
+        "$HOME/.bashrc"
+        "$HOME/.zshrc"
+        "$HOME/.config/fish"
+        "$HOME/.gitconfig"
+        "$HOME/.ssh/config"
+    )
+
+    # Construir lista de archivos existentes
+    local existing_configs=()
+    for cfg in "${configs[@]}"; do
+        if [[ -e "$cfg" ]]; then
+            existing_configs+=("$cfg")
+        fi
+    done
+
+    if [[ ${#existing_configs[@]} -gt 0 ]]; then
+        # Usar array para manejar espacios correctamente
+        tar -czf "$backup_file" "${existing_configs[@]}" 2>/dev/null
+        print_status "ok" "Backup: $backup_file"
+        print_status "info" "Tamaño: $(print_size "$backup_file")"
+    else
+        print_status "warn" "No se encontraron archivos para respaldar"
+    fi
+}
+
+backup_systemd_services() {
+    print_subsection "Servicios Habilitados"
+
+    local date=$(date +%Y%m%d)
+    systemctl list-unit-files --state=enabled --type=service 2>/dev/null | awk 'NR>1 {print $1}' | grep -v "^$" > "$BACKUP_DIR/enabled-services-$date.txt"
+    print_status "ok" "Servicios: $BACKUP_DIR/enabled-services-$date.txt"
+}
+
+show_restore_instructions() {
+    print_subsection "Instrucciones de Restauración"
+
+    echo -e "
+  ${WHITE}Para restaurar en un nuevo sistema:${NC}
+
+  ${CYAN}1. Paquetes oficiales:${NC}
+     sudo pacman -S --needed - < packages-official-*.txt
+
+  ${CYAN}2. Paquetes AUR (con yay):${NC}
+     yay -S --needed - < packages-aur-*.txt
+
+  ${CYAN}3. Flatpaks:${NC}
+     cat packages-flatpak-*.txt | xargs flatpak install -y
+
+  ${CYAN}4. Configuraciones:${NC}
+     tar -xzf configs-*.tar.gz -C /
+
+  ${CYAN}5. Servicios:${NC}
+     cat enabled-services-*.txt | xargs sudo systemctl enable
+"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MÓDULO DE GAMING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+check_gaming_setup() {
+    print_subsection "Configuración Gaming"
+
+    ensure_system_detected
+
+    # Verificar GameMode
+    if command -v gamemoded &>/dev/null; then
+        if pgrep -x gamemoded &>/dev/null; then
+            print_status "ok" "GameMode instalado y activo"
+        else
+            print_status "ok" "GameMode instalado"
+        fi
+    else
+        print_status "info" "GameMode no instalado (recomendado para gaming)"
+    fi
+
+    # Verificar MangoHud
+    if command -v mangohud &>/dev/null; then
+        print_status "ok" "MangoHud instalado"
+    else
+        print_status "info" "MangoHud no instalado (overlay de rendimiento)"
+    fi
+
+    # Verificar Steam
+    if command -v steam &>/dev/null || flatpak list 2>/dev/null | grep -qi steam; then
+        print_status "ok" "Steam instalado"
+    fi
+
+    # Verificar Wine/Proton
+    if command -v wine &>/dev/null; then
+        local wine_ver=$(wine --version 2>/dev/null)
+        print_status "ok" "Wine: ${wine_ver:-instalado}"
+    fi
+
+    # Verificar drivers de GPU
+    if $HAS_NVIDIA; then
+        if pacman -Qi nvidia &>/dev/null || pacman -Qi nvidia-dkms &>/dev/null; then
+            local nvidia_ver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null)
+            print_status "ok" "NVIDIA Driver: ${nvidia_ver:-instalado}"
+        else
+            print_status "warn" "GPU NVIDIA detectada pero driver propietario no instalado"
+        fi
+    fi
+
+    if $HAS_AMD; then
+        if pacman -Qi mesa &>/dev/null; then
+            print_status "ok" "Mesa (AMD) instalado"
+        fi
+    fi
+}
+
+optimize_gaming() {
+    print_subsection "Optimizaciones Gaming"
+
+    # Verificar conflicto GameMode vs ananicy
+    if command -v gamemoded &>/dev/null && systemctl is-active ananicy-cpp &>/dev/null 2>&1; then
+        print_status "warn" "GameMode y ananicy-cpp activos (pueden conflictuar)"
+        print_status "info" "Recomendado: usar solo uno de los dos"
+    fi
+
+    # Configurar límites para juegos
+    local limits_file="/etc/security/limits.d/99-gaming.conf"
+    if [[ ! -f "$limits_file" ]]; then
+        cat << 'EOF' | sudo tee "$limits_file" >/dev/null
+# Límites optimizados para gaming
+@wheel          soft    nofile          1048576
+@wheel          hard    nofile          1048576
+@wheel          soft    memlock         unlimited
+@wheel          hard    memlock         unlimited
+@wheel          soft    nice            -20
+@wheel          hard    nice            -20
+EOF
+        print_status "ok" "Límites de sistema optimizados para gaming"
+    else
+        print_status "ok" "Límites de gaming ya configurados"
+    fi
+
+    # Deshabilitar watchdog (reduce latencia)
+    if [[ ! -f /etc/modprobe.d/nowatchdog.conf ]]; then
+        echo "blacklist iTCO_wdt" | sudo tee /etc/modprobe.d/nowatchdog.conf >/dev/null
+        print_status "ok" "Watchdog deshabilitado (reduce micro-stuttering)"
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MÓDULO DE AUTOMATIZACIÓN
+# ═══════════════════════════════════════════════════════════════════════════════
+
+setup_maintenance_timer() {
+    print_subsection "Mantenimiento Automático"
+
+    local service_file="/etc/systemd/system/h0rus-maintenance.service"
+    local timer_file="/etc/systemd/system/h0rus-maintenance.timer"
+    local script_path=$(realpath "$0")
+
+    # Verificar que el script existe
+    if [[ ! -f "$script_path" ]]; then
+        print_status "fail" "No se puede encontrar el script"
+        return 1
+    fi
+
+    # Crear servicio
+    cat << EOF | sudo tee "$service_file" >/dev/null
+[Unit]
+Description=H0RUS System Maintenance
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=$script_path --auto
+User=root
+Nice=19
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Crear timer (semanal)
+    cat << EOF | sudo tee "$timer_file" >/dev/null
+[Unit]
+Description=H0RUS Weekly Maintenance
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+RandomizedDelaySec=3600
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now h0rus-maintenance.timer 2>/dev/null
+
+    print_status "ok" "Timer de mantenimiento semanal configurado"
+    local next_run=$(systemctl list-timers h0rus-maintenance.timer --no-pager 2>/dev/null | awk 'NR==2 {print $1, $2}')
+    print_status "info" "Próxima ejecución: ${next_run:-ver con 'systemctl list-timers'}"
+}
+
+disable_maintenance_timer() {
+    sudo systemctl disable --now h0rus-maintenance.timer 2>/dev/null
+    sudo rm -f /etc/systemd/system/h0rus-maintenance.{service,timer}
+    sudo systemctl daemon-reload
+    print_status "ok" "Timer de mantenimiento deshabilitado"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MÓDULO DE ANÁLISIS DE DUPLICADOS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+find_duplicates() {
+    print_subsection "Archivos Duplicados"
+
+    if command -v fdupes &>/dev/null; then
+        print_status "info" "Buscando duplicados en $HOME (puede tardar)..."
+
+        local dupes=$(fdupes -r -S "$HOME" 2>/dev/null | head -50)
+        if [[ -n "$dupes" ]]; then
+            local total=$(echo "$dupes" | grep -c "bytes each" || echo "0")
+            print_status "warn" "Encontrados grupos de duplicados"
+            print_status "info" "Ejecuta 'fdupes -r $HOME' para ver todos"
+        else
+            print_status "ok" "No se encontraron duplicados significativos"
+        fi
+    else
+        print_status "info" "Instala 'fdupes' para buscar archivos duplicados"
+    fi
+}
+
+find_large_files() {
+    print_subsection "Archivos Grandes"
+
+    load_exclusions
+
+    # Construir argumentos de exclusión para find
+    local exclude_args=""
+    for excluded in "${EXCLUDED_PATHS[@]}"; do
+        exclude_args="$exclude_args -path '$excluded' -prune -o"
+    done
+
+    print_status "info" "Top 10 archivos más grandes en $HOME:"
+    if [[ ${#EXCLUDED_PATHS[@]} -gt 0 ]]; then
+        print_status "info" "(Excluyendo ${#EXCLUDED_PATHS[@]} rutas protegidas)"
+    fi
+
+    # Usar eval para manejar las exclusiones dinámicamente
+    eval "find '$HOME' $exclude_args -type f -size +100M -print 2>/dev/null" | head -10 | while read file; do
+        # Verificar si está excluido
+        if ! is_path_excluded "$file"; then
+            local size=$(du -h "$file" 2>/dev/null | cut -f1)
+            local name=$(basename "$file")
+            echo -e "    ${GRAY}└─${NC} ${YELLOW}$size${NC} $name"
+        fi
+    done
+
+    echo ""
+    print_status "info" "Top 10 directorios más grandes:"
+    du -h --max-depth=2 "$HOME" 2>/dev/null | sort -hr | head -20 | while read line; do
+        local size=$(echo "$line" | cut -f1)
+        local dir=$(echo "$line" | cut -f2)
+        # Verificar si está excluido
+        if ! is_path_excluded "$dir"; then
+            echo -e "    ${GRAY}└─${NC} ${YELLOW}$size${NC} $dir"
+        fi
+    done | head -10
+}
+
+find_broken_symlinks() {
+    print_subsection "Enlaces Simbólicos Rotos"
+
+    local broken=$(find "$HOME" -xtype l 2>/dev/null | head -20)
+    local count=0
+    [[ -n "$broken" ]] && count=$(echo "$broken" | wc -l)
+
+    if [[ $count -gt 0 ]]; then
+        print_status "warn" "$count enlaces rotos encontrados"
+        echo "$broken" | head -5 | while read link; do
+            echo -e "    ${GRAY}└─${NC} $link"
+        done
+        if [[ $count -gt 5 ]]; then
+            echo -e "    ${GRAY}└─${NC} ... y $((count - 5)) más"
+        fi
+    else
+        print_status "ok" "No hay enlaces rotos"
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FUNCIONES DE EJECUCIÓN COMPLETA
+# ═══════════════════════════════════════════════════════════════════════════════
+
+run_full_cleanup() {
+    print_section "${ICON_CLEAN} LIMPIEZA COMPLETA"
+
+    # Cargar y mostrar exclusiones
+    load_exclusions
+    show_exclusions_banner
+
+    clean_pacman_cache
+    clean_orphan_packages
+    clean_journal_logs
+    clean_yay_cache
+    clean_user_cache
+    clean_trash
+    clean_flatpak
+    clean_coredumps
+    clean_tmp
+    clean_old_kernels
+
+    print_section "${ICON_OK} LIMPIEZA COMPLETADA"
+}
+
+run_full_optimization() {
+    print_section "${ICON_ROCKET} OPTIMIZACIÓN COMPLETA"
+
+    detect_system
+    optimize_io_scheduler
+    optimize_cpu_governor
+    optimize_swappiness
+    optimize_zram
+    optimize_network
+    optimize_filesystem
+
+    print_section "${ICON_OK} OPTIMIZACIÓN COMPLETADA"
+}
+
+run_security_audit() {
+    print_section "${ICON_SHIELD} AUDITORÍA DE SEGURIDAD"
+
+    check_permissions
+    check_suid_files
+    check_firewall
+    check_ssh_security
+    check_failed_logins
+    check_package_integrity
+    audit_users
+
+    print_section "${ICON_OK} AUDITORÍA COMPLETADA"
+}
+
+run_system_health() {
+    print_section "${ICON_TEMP} ESTADO DEL SISTEMA"
+
+    check_temperatures
+    check_battery
+    check_disk_health
+    check_failed_services
+    check_boot_time
+    check_recent_errors
+    show_resource_usage
+
+    print_section "${ICON_OK} DIAGNÓSTICO COMPLETADO"
+}
+
+run_backup() {
+    print_section "${ICON_BACKUP} BACKUP DEL SISTEMA"
+
+    backup_package_list
+    backup_configs
+    backup_systemd_services
+    show_restore_instructions
+
+    print_section "${ICON_OK} BACKUP COMPLETADO"
+}
+
+run_auto_maintenance() {
+    # Modo automático para el timer (sin confirmaciones)
+    log "Iniciando mantenimiento automático"
+
+    # Limpieza segura sin confirmaciones
+    if command -v paccache &>/dev/null; then
+        sudo paccache -rk2 2>/dev/null
+        sudo paccache -ruk0 2>/dev/null
+    fi
+
+    sudo journalctl --vacuum-time=7d 2>/dev/null
+    sudo journalctl --vacuum-size=500M 2>/dev/null
+
+    # Limpiar caché de usuario (solo archivos viejos)
+    find ~/.cache -type f -atime +30 -delete 2>/dev/null
+
+    # Vaciar papelera
+    rm -rf ~/.local/share/Trash/files/* 2>/dev/null
+    rm -rf ~/.local/share/Trash/info/* 2>/dev/null
+
+    # Flatpak
+    flatpak uninstall --unused -y 2>/dev/null
+
+    # Temporales del usuario
+    find /tmp -maxdepth 1 -user "$USER" -type f -atime +7 -delete 2>/dev/null
+
+    log "Mantenimiento automático completado"
+}
+
+update_system() {
+    print_section "${ICON_PACKAGE} ACTUALIZACIÓN DEL SISTEMA"
+
+    # Verificar actualizaciones sin hacer partial upgrade
+    print_status "info" "Verificando actualizaciones disponibles..."
+
+    local updates=$(checkupdates 2>/dev/null | wc -l || pacman -Qu 2>/dev/null | wc -l)
+
+    if [[ $updates -gt 0 ]]; then
+        print_status "warn" "$updates actualizaciones disponibles"
+
+        if confirm_action "¿Actualizar sistema?"; then
+            # Actualización completa y segura
+            sudo pacman -Syu --noconfirm
+
+            if command -v yay &>/dev/null; then
+                print_status "info" "Actualizando AUR..."
+                yay -Sua --noconfirm
+            fi
+
+            if command -v flatpak &>/dev/null; then
+                print_status "info" "Actualizando Flatpak..."
+                flatpak update -y
+            fi
+
+            print_status "ok" "Sistema actualizado"
+        fi
+    else
+        print_status "ok" "Sistema actualizado"
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MENÚ PRINCIPAL
+# ═══════════════════════════════════════════════════════════════════════════════
+
+show_menu() {
+    while true; do
+        print_header
+
+        echo -e "  ${WHITE}MENÚ PRINCIPAL${NC}\n"
+        echo -e "  ${CYAN}1)${NC}  ${ICON_INFO}  Información del Sistema"
+        echo -e "  ${CYAN}2)${NC}  ${ICON_DISK}  Análisis de Espacio"
+        echo -e "  ${CYAN}3)${NC}  ${ICON_CLEAN} Limpieza Completa"
+        echo -e "  ${CYAN}4)${NC}  ${ICON_ROCKET} Optimización Completa"
+        echo -e "  ${CYAN}5)${NC}  ${ICON_SHIELD} Auditoría de Seguridad"
+        echo -e "  ${CYAN}6)${NC}  ${ICON_TEMP}  Estado del Sistema"
+        echo -e "  ${CYAN}7)${NC}  ${ICON_PACKAGE} Actualizar Sistema"
+        echo -e "  ${CYAN}8)${NC}  ${ICON_BACKUP} Backup"
+        echo ""
+        echo -e "  ${GRAY}── Herramientas ──${NC}"
+        echo -e "  ${CYAN}9)${NC}  ${ICON_GAME}  Gaming Setup"
+        echo -e "  ${CYAN}10)${NC} ${ICON_DISK}  Buscar Archivos Grandes"
+        echo -e "  ${CYAN}11)${NC} ${ICON_TRASH} Buscar Duplicados"
+        echo -e "  ${CYAN}12)${NC} ${ICON_TIMER} Configurar Mantenimiento Auto"
+        echo -e "  ${CYAN}13)${NC} ${ICON_LOCK} Gestionar Exclusiones"
+        echo ""
+        echo -e "  ${CYAN}0)${NC}  Salir"
+        echo ""
+        echo -e "${GRAY}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+        read -p "  Seleccione una opción: " option
+
+        case $option in
+            1) show_system_info ;;
+            2) show_cleanup_analysis ;;
+            3) run_full_cleanup ;;
+            4) run_full_optimization ;;
+            5) run_security_audit ;;
+            6) run_system_health ;;
+            7) update_system ;;
+            8) run_backup ;;
+            9) check_gaming_setup; optimize_gaming ;;
+            10) find_large_files ;;
+            11) find_duplicates; find_broken_symlinks ;;
+            12) setup_maintenance_timer ;;
+            13) manage_exclusions_menu ;;
+            0)
+                echo -e "\n${GREEN}¡Hasta pronto!${NC}\n"
+                exit 0
+                ;;
+            *) print_status "fail" "Opción no válida" ;;
+        esac
+
+        echo ""
+        read -p "  Presione ENTER para continuar..."
+    done
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AYUDA Y ARGUMENTOS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+show_help() {
+    echo -e "${CYAN}H0RUS System Maintenance v${VERSION}${NC}"
+    echo ""
+    echo -e "${WHITE}Uso:${NC} $0 [opción]"
+    echo ""
+    echo -e "${WHITE}Opciones:${NC}"
+    echo "  --help, -h           Mostrar esta ayuda"
+    echo "  --info, -i           Información del sistema"
+    echo "  --analyze, -a        Análisis de espacio"
+    echo "  --clean, -c          Limpieza completa"
+    echo "  --optimize, -o       Optimización completa"
+    echo "  --security, -s       Auditoría de seguridad"
+    echo "  --health             Estado del sistema"
+    echo "  --update, -u         Actualizar sistema"
+    echo "  --backup, -b         Backup de configuración"
+    echo "  --gaming, -g         Setup de gaming"
+    echo "  --quick, -q          Limpieza rápida"
+    echo "  --full, -f           Todo: limpieza + optimización + seguridad"
+    echo "  --auto               Modo automático (para timer)"
+    echo "  --setup-timer        Configurar mantenimiento automático"
+    echo ""
+    echo -e "${WHITE}Exclusiones:${NC}"
+    echo "  --exclude <ruta>     Agregar ruta a exclusiones"
+    echo "  --unexclude <ruta>   Eliminar ruta de exclusiones"
+    echo "  --show-exclusions    Mostrar rutas excluidas"
+    echo ""
+    echo -e "${GRAY}Sin argumentos: Abre el menú interactivo${NC}"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Verificaciones iniciales
+if [[ ! -f /etc/arch-release ]]; then
+    echo -e "${RED}Error: Este script está diseñado para Arch Linux${NC}"
+    exit 1
+fi
+
+check_root
+
+# Adquirir bloqueo (excepto para ayuda)
+if [[ "$1" != "--help" ]] && [[ "$1" != "-h" ]]; then
+    acquire_lock
+fi
+
+# Procesar argumentos
+case "$1" in
+    --help|-h)
+        show_help
+        ;;
+    --info|-i)
+        print_header
+        show_system_info
+        ;;
+    --analyze|-a)
+        print_header
+        show_system_info
+        show_cleanup_analysis
+        ;;
+    --clean|-c)
+        print_header
+        run_full_cleanup
+        ;;
+    --optimize|-o)
+        print_header
+        run_full_optimization
+        ;;
+    --security|-s)
+        print_header
+        run_security_audit
+        ;;
+    --health)
+        print_header
+        run_system_health
+        ;;
+    --update|-u)
+        print_header
+        update_system
+        ;;
+    --backup|-b)
+        print_header
+        run_backup
+        ;;
+    --gaming|-g)
+        print_header
+        check_gaming_setup
+        optimize_gaming
+        ;;
+    --quick|-q)
+        print_header
+        print_section "${ICON_CLEAN} LIMPIEZA RÁPIDA"
+        load_exclusions
+        show_exclusions_banner
+        clean_pacman_cache
+        clean_trash
+        clean_user_cache
+        clean_tmp
+        print_section "${ICON_OK} COMPLETADO"
+        ;;
+    --full|-f)
+        print_header
+        run_full_cleanup
+        run_full_optimization
+        run_security_audit
+        run_system_health
+        ;;
+    --auto)
+        run_auto_maintenance
+        ;;
+    --setup-timer)
+        print_header
+        setup_maintenance_timer
+        ;;
+    --exclude)
+        if [[ -z "$2" ]]; then
+            echo -e "${RED}Error: Debe especificar una ruta${NC}"
+            echo "Uso: $0 --exclude /ruta/a/excluir"
+            exit 1
+        fi
+        add_exclusion "$2"
+        ;;
+    --unexclude)
+        if [[ -z "$2" ]]; then
+            echo -e "${RED}Error: Debe especificar una ruta${NC}"
+            echo "Uso: $0 --unexclude /ruta/a/eliminar"
+            exit 1
+        fi
+        remove_exclusion "$2"
+        ;;
+    --show-exclusions)
+        print_header
+        show_exclusions
+        ;;
+    --exclusions)
+        manage_exclusions_menu
+        ;;
+    "")
+        show_menu
+        ;;
+    *)
+        echo -e "${RED}Opción desconocida: $1${NC}"
+        show_help
+        exit 1
+        ;;
+esac
+
+exit 0
