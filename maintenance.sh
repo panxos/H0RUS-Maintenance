@@ -251,23 +251,23 @@ detect_distro() {
             arch|manjaro|endeavouros)
                 DISTRO_FAMILY="Arch"
                 PKG_MANAGER="pacman"
-                PKG_UPDATE="pacman -Syu --noconfirm"
-                PKG_CLEAN="pacman -Sc --noconfirm"
-                PKG_INSTALL="pacman -S --noconfirm --needed"
+                PKG_UPDATE="sudo pacman -Syu --noconfirm"
+                PKG_CLEAN="sudo pacman -Sc --noconfirm"
+                PKG_INSTALL="sudo pacman -S --noconfirm --needed"
                 ;;
             debian|ubuntu|linuxmint|pop)
                 DISTRO_FAMILY="Debian"
                 PKG_MANAGER="apt"
-                PKG_UPDATE="apt update && apt full-upgrade -y"
-                PKG_CLEAN="apt autoremove -y && apt clean"
-                PKG_INSTALL="apt install -y"
+                PKG_UPDATE="sudo apt update && sudo apt full-upgrade -y"
+                PKG_CLEAN="sudo apt autoremove -y && sudo apt clean"
+                PKG_INSTALL="sudo apt install -y"
                 ;;
             fedora|rhel|centos|alma)
                 DISTRO_FAMILY="RedHat"
                 PKG_MANAGER="dnf"
-                PKG_UPDATE="dnf update -y"
-                PKG_CLEAN="dnf autoremove -y && dnf clean all"
-                PKG_INSTALL="dnf install -y"
+                PKG_UPDATE="sudo dnf update -y"
+                PKG_CLEAN="sudo dnf autoremove -y && sudo dnf clean all"
+                PKG_INSTALL="sudo dnf install -y"
                 ;;
             *)
                 DISTRO_FAMILY="Unknown"
