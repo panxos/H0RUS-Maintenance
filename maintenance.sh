@@ -103,10 +103,10 @@ print_header() {
 ║   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝                                ║
 ║                                                                               ║
 EOF
-    # Ajuste de marco dinámico
+    # Ajuste de marco dinámico (total width 81 chars: 1 border + 79 space + 1 border)
+    # Top border has 79 '═', total length 81.
     local info_text="v$VERSION - $DISTRO_FAMILY Detected"
-    local available_space=77 # Ancho total dentro del marco (80 - 2 bordes - 1 espacio margen)
-    printf "║   %-72s    ║\n" "$info_text"
+    printf "║   %-75s ║\n" "$info_text"
     echo "╚═══════════════════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
