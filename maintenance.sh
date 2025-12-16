@@ -106,7 +106,22 @@ EOF
     # Ajuste de marco dinámico (total width 81 chars: 1 border + 79 space + 1 border)
     # Top border has 79 '═', total length 81.
     local info_text="v$VERSION - $DISTRO_FAMILY Detected"
+    local author_text="Author: Panxos"
+    local repo_text="Github: panxos/H0RUS-Maintenance"
+    
+    # 81 chars total width
+    # ║ (1) + 3 spaces + TEXT + padding + 1 space + ║ (1)
+    # 1 + 3 + X + P + 1 + 1 = 81
+    # X + P = 75
+    # So printf "%-75s" is correct for the content area (3 spaces + text + padding) if we account for the trailing space separately or include it.
+    
+    # Let's use a simpler approach:
+    # ║ + space + content (padded to 77) + space + ║ ?? No.
+    # The Ascii block is: ║ + 79 spaces + ║
+    
     printf "║   %-75s ║\n" "$info_text"
+    printf "║   %-75s ║\n" "$author_text"
+    printf "║   %-75s ║\n" "$repo_text"
     echo "╚═══════════════════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
