@@ -9,6 +9,8 @@
 #
 #  H0RUS System Maintenance PRO - Multi-Distro & Advanced Optimization
 #  Versión: 3.0 - The "BleachBit" Killer
+#  Author: Panxos 
+#  Repository: https://github.com/panxos/H0RUS-Maintenance
 #═══════════════════════════════════════════════════════════════════════════════
 
 set -o pipefail
@@ -17,7 +19,7 @@ set -o pipefail
 # CONFIGURACIÓN GLOBAL
 # ═══════════════════════════════════════════════════════════════════════════════
 
-VERSION="3.0-PRO"
+VERSION="3.0"
 SCRIPT_NAME="H0RUS Maintenance"
 CONFIG_DIR="$HOME/.config/h0rus"
 BACKUP_DIR="$HOME/.local/share/h0rus/backups"
@@ -101,7 +103,10 @@ print_header() {
 ║   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝                                ║
 ║                                                                               ║
 EOF
-    printf "║   %-68s    ║\n" "v$VERSION - $DISTRO_FAMILY Detected"
+    # Ajuste de marco dinámico
+    local info_text="v$VERSION - $DISTRO_FAMILY Detected"
+    local available_space=77 # Ancho total dentro del marco (80 - 2 bordes - 1 espacio margen)
+    printf "║   %-72s    ║\n" "$info_text"
     echo "╚═══════════════════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
