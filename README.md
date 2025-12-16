@@ -6,6 +6,10 @@
 
 **H0RUS Maintenance PRO** es la suite definitiva de mantenimiento y optimización automatizada para sistemas Linux. Diseñada para actuar como un "Administrador de Sistemas en una caja", combina la potencia de limpieza de herramientas tipo BleachBit con la seguridad de Snapper y la comodidad de las notificaciones móviles.
 
+<p align="center">
+  <img src="images/main_menu.png" alt="Main Menu" width="700">
+</p>
+
 > **Novedad v3.0**: Ahora compatible automáticamente con familias **Arch Linux, Debian/Ubuntu y Fedora/RHEL**.
 
 ## 🚀 Características Principales
@@ -40,13 +44,18 @@ Aplica las mejores prácticas de sysadmin con una sola opción:
 - **Red (BBR)**: Activa el algoritmo de control de congestión TCP BBR de Google para mejorar la velocidad de red.
 - **SSD Trim**: Fuerza un TRIM en discos SSD/NVMe para mantener el rendimiento.
 
-### ⏲️ Automatización "Set & Forget"
+<p align="center">
+  <img src="images/optimization.png" alt="Optimization Report" width="600">
+</p>
+
+### timer Automatización "Set & Forget"
 Incluye un módulo para autoconfigurarse como un **Timer de Systemd**:
 - Se ejecuta silenciosamente una vez a la semana.
 - Realiza todo el mantenimiento sin intervención.
 - Te envía un mensaje a Telegram cuando termina.
 
 ---
+
 
 ## 📦 Instalación
 
@@ -115,7 +124,12 @@ Asistente para vincular el script con tu bot de Telegram.
 3.  Ingresa estos datos cuando el asistente lo pida.
 Se guardarán en `~/.config/h0rus/config.conf` (o ruta equivalente según el script).
 
+<p align="center">
+  <img src="images/telegram_setup.png" alt="Telegram Setup" width="600">
+</p>
+
 ---
+
 
 ## 🤖 Modo Automático (CLI)
 Si prefieres usar tus propios cronjobs o scripts, puedes invocar H0RUS en modo no interactivo:
